@@ -1,0 +1,12 @@
+{
+  "name": "rng-tower-defense",
+  "version": "1.0.0",
+  "main": "app.js",
+ "scripts": {
+    "start": "lite-server"
+},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}

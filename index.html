@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Phaser RNG Maze with Vertical Continuation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+        }
+        #game-container {
+            width: 750px; /* 30 columns * 25px each */
+            height: 525px; /* 21 rows * 25px each */
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container"></div>
+
+<!-- Phaser JS library -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+
+<!-- Game code -->
+<script>
+    const config = {
+        type: Phaser.AUTO,
+        width: 750,  // 30 columns * 25px
+        height: 525, // 21 rows * 25px
+        backgroundColor: '#ffffff',
+        parent: 'game-container',
+        scene: {
+            preload: preload,
+            create: create
+        }
+    };
+
+    const cellSize = 25; // Size of each cell in the grid (reduced to 25px)
+    const cols = 30; // 30 columns
+    const rows = 21;  // 21 rows
+    let ghost; // To hold the ghost sprite
+    let currentPathIndex = 0; // To track the ghost's movement along the path
+    let pathGrid = []; // To track the white path
+    let pathSteps = []; // To store the exact path sequence (precomputed)
+    let verticalCooldown = 0; // Cooldown counter for vertical movement
+    let verticalMovementDirection = 0; // Tracks direction of vertical movement: 1 = up, -1 = down, 0 = none
+
+    const minHorizontalMoves = 2; // The minimum number of horizontal moves required before another vertical move is allowed
+    const verticalContinuationChance = 0.5; // 50% chance to continue moving vertically after an up/down move
+
+    const game = new Phaser.Game(config);
+
+    function preload() {
+        // Load the ghost image asset
+        this.load.image('ghost', '../assets/ghost.png'); // Corrected path to the ghost image
+    }
+
+    function create() {
+        const graphics = this.add.graphics();
+
+        // Randomly select a starting row for the white path
+        let currentRow = Phaser.Math.Between(1, rows - 2); // Avoid the top and bottom rows for the blue boundary
+        let currentCol = 0; // Start from the leftmost column
+
+        // Initialize the grid with blue cells
+        for (let i = 0; i < rows; i++) {
+            pathGrid[i] = [];
+            for (let j = 0; j < cols; j++) {
+                pathGrid[i][j] = 0; // Initialize with blue (0 means blue, 1 means white)
+                graphics.fillStyle(0x0000ff, 1); // Blue color for all cells
+                graphics.fillRect(j * cellSize, i * cellSize, cellSize, cellSize);
+                graphics.lineStyle(2, 0x000000); // Black grid lines
+                graphics.strokeRect(j * cellSize, i * cellSize, cellSize, cellSize);
+            }
+        }
+
+        // Perform all calculations before the timer starts
+        generateWhitePath(graphics, currentRow, currentCol);
+
+        // Place the ghost at the first tile in the precomputed path
+        placeGhost(this, pathSteps[0].row, pathSteps[0].col);
+
+        // Now start the timer to only handle the movement, with all calculations done upfront
+        this.time.addEvent({
+            delay: 1000, // Move every 1 second
+            callback: moveGhostAlongPath,
+            callbackScope: this,
+            loop: true
+        });
+    }
+
+    // Generate the white path by moving right, occasionally moving up or down (precompute the path)
+    function generateWhitePath(graphics, row, col) {
+        while (col < cols) {
+            // Set the current cell to white
+            pathGrid[row][col] = 1;
+            pathSteps.push({ row: row, col: col }); // Record the path step
+            graphics.fillStyle(0xffffff, 1); // White color
+            graphics.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+            graphics.strokeRect(col * cellSize, row * cellSize, cellSize, cellSize);
+
+            // Check if we are in vertical movement and there's a chance to continue going up/down
+            if (verticalMovementDirection !== 0 && Phaser.Math.FloatBetween(0, 1) < verticalContinuationChance) {
+                if (verticalMovementDirection === 1 && row > 1) {
+                    row--; // Continue moving up
+                    continue;
+                } else if (verticalMovementDirection === -1 && row < rows - 2) {
+                    row++; // Continue moving down
+                    continue;
+                }
+            }
+
+            // Move right to the next column
+            col++;
+
+            if (col >= cols) break; // Stop if we've reached the end
+
+            let prevRow = row; // Save the previous row for corner handling
+
+            // Cool down check: Only allow up/down movement if we've moved enough horizontally
+            if (verticalCooldown >= minHorizontalMoves) {
+                // Randomly select one of the three movement scenarios
+                let movementType = Phaser.Math.Between(1, 3);
+
+                // Move up or down, or continue straight
+                if (movementType === 2 && row > 1) {
+                    row--; // Move up
+                    verticalMovementDirection = 1; // Set the vertical direction to "up"
+                    verticalCooldown = 0; // Reset the cooldown after a vertical move
+                } else if (movementType === 3 && row < rows - 2) {
+                    row++; // Move down
+                    verticalMovementDirection = -1; // Set the vertical direction to "down"
+                    verticalCooldown = 0; // Reset the cooldown after a vertical move
+                } else {
+                    verticalMovementDirection = 0; // Stop vertical movement
+                    verticalCooldown++; // Increment cooldown if no vertical movement happens
+                }
+            } else {
+                verticalCooldown++; // Increment cooldown for each horizontal move
+                verticalMovementDirection = 0; // Stop vertical movement when moving horizontally
+            }
+
+            // If the row has changed (vertical movement), add an intermediate step
+            if (prevRow !== row) {
+                // Add the intermediate step (move right first before moving up/down)
+                pathGrid[prevRow][col] = 1; // Mark the next right step
+                pathSteps.push({ row: prevRow, col: col }); // Record the rightward step
+                graphics.fillStyle(0xffffff, 1); // White color for the intermediate step
+                graphics.fillRect(col * cellSize, prevRow * cellSize, cellSize, cellSize);
+                graphics.strokeRect(col * cellSize, prevRow * cellSize, cellSize, cellSize);
+            }
+
+            // Mark the new position as part of the white path (after vertical movement)
+            pathGrid[row][col] = 1;
+            pathSteps.push({ row: row, col: col }); // Record the next step
+            graphics.fillStyle(0xffffff, 1); // White color for the vertical step
+            graphics.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+            graphics.strokeRect(col * cellSize, row * cellSize, cellSize, cellSize);
+        }
+
+        console.log('Path Steps (Precomputed):', pathSteps); // Debugging: Log the precomputed path steps
+    }
+
+    // Place the ghost at the given row and column
+    function placeGhost(scene, row, col) {
+        const xPos = col * cellSize + cellSize / 2;
+        const yPos = row * cellSize + cellSize / 2;
+
+        console.log('Placing ghost at coordinates:', xPos, yPos); // Debugging: Log ghost position coordinates
+
+        if (!ghost) {
+            // Create the ghost sprite
+            ghost = scene.add.sprite(xPos, yPos, 'ghost');
+            ghost.setScale(0.8); // Adjust scale if needed
+        } else {
+            // Move the ghost to a new position
+            ghost.setPosition(xPos, yPos);
+        }
+    }
+
+    // Move the ghost along the precomputed path step by step
+    function moveGhostAlongPath() {
+        if (currentPathIndex < pathSteps.length - 1) {
+            currentPathIndex++; // Move to the next step in the path
+            const nextStep = pathSteps[currentPathIndex]; // Get the next step
+            placeGhost(this, nextStep.row, nextStep.col); // Move the ghost to the next step
+        }
+    }
+</script>
+
+</body>
+</html>
